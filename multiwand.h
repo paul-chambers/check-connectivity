@@ -5,6 +5,15 @@
 #ifndef MULTIWAND_MULTIWAND_H
 #define MULTIWAND_MULTIWAND_H
 
+#define stringify(x) #x
+#define tostring(x) stringify(x)
+#define location __FILE__ ":" tostring(__LINE__)
+#define logDebug( ... ) fprintf( stderr, location " " __VA_ARGS__ )
+
+#define ALIGN(bytes) __attribute__ ((aligned(bytes)))
+#define PACKED __attribute__ ((packed))
+#define PACKED_STRUCT(...) struct __VA_ARGS__ PACKED
+
 #ifdef DEBUG
 // NOTE: these are private to libnl3, but it's very handy to have them defined when debugging
 // DO NOT USE IN SOURCE CODE!
