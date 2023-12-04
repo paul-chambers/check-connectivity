@@ -13,7 +13,7 @@
 #else
 #define logdebug( ... )
 #endif
-#define logError( ... ) fprintf( stderr, __VA_ARGS__ )
+#define logError( ... ) fprintf( stderr, "Error: " __VA_ARGS__ )
 
 #define ALIGN(bytes) __attribute__ ((aligned(bytes)))
 #define PACKED __attribute__ ((packed))

@@ -239,6 +239,10 @@ char * sockAddrToStr( uSockAddr * sockAddr, char * dest, size_t destSize )
 
     switch (sockAddr->family)
     {
+    case AF_UNSPEC:
+        snprintf( dest, destSize,
+                  "<address family not specified)>");
+        break;
     case AF_INET:
         p = (byte *)&sockAddr->in.sin_addr;
         snprintf( dest, destSize,
@@ -344,7 +348,7 @@ int newICMPsocket( const char * interface )
     int result = socket( AF_INET, SOCK_RAW, IPPROTO_ICMP );
     if ( result < 0 ) {
         if ( errno == EPERM ) {
-            logError( "%s needs to create a raw network socket, and doesn't have permission to do so.\n"
+            logError( "%s needs to create a raw network socket, but doesn't have permission to do so.\n"
                       "Please either run %s as root, or grant it the CAP_NET_RAW capability (preferred).\n",
                       g.my.name, g.my.name );
             return -errno;
@@ -482,9 +486,7 @@ void forEachAddrObj( struct nl_object * nlObj, void * arg )
             nl_addr2str( localAddr, ipAddrAsStr, sizeof(ipAddrAsStr) );
             char sockAddrAsStr[256];
             sockAddrToStr( &wan->source, sockAddrAsStr, sizeof(sockAddrAsStr) );
-            logDebug( "source %s (ip: %s)\n", sockAddrAsStr, ipAddrAsStr );
-
-            ;
+            logDebug( "source: %s (ip: %s)\n", sockAddrAsStr, ipAddrAsStr );
 #endif
 
             /* If this source address isn't in the same subnet as the gateway
@@ -539,14 +541,13 @@ void forEachRouteObj( struct nl_object * nlObj, void * arg )
                     if ( gatewayAddr == NULL) {
                         logDebug( "error: gatewayAddr is undefined\n" );
                     } else {
-                        wan->gateway.family = nl_addr_get_family( gatewayAddr );
                         socklen_t sockLen = sizeof( wan->gateway );
                         nl_addr_fill_sockaddr( gatewayAddr, &wan->gateway.common, &sockLen);
 #ifdef DEBUG
                         char str[256];
                         nl_addr2str( gatewayAddr, str, sizeof(str));
                         char sockAddrAsStr[256];
-                        sockAddrToStr( &wan->source, sockAddrAsStr, sizeof(sockAddrAsStr) );
+                        sockAddrToStr( &wan->gateway, sockAddrAsStr, sizeof(sockAddrAsStr) );
 
                         logDebug( "gateway: %s (%s)\n", sockAddrAsStr, str );
 #endif
@@ -612,7 +613,7 @@ int setup( int argc, char * argv[] )
 int mainLoop( void )
 {
     if (g.wanList == NULL) {
-        logError("Error: %s was unable to find any default network routes to monitor.\n", g.my.name);
+        logError("%s: no default network routes found to monitor.\n", g.my.name);
         return -1;
     }
     tICMPpacket * packet = calloc(1, sizeof( tICMPpacket ) );
