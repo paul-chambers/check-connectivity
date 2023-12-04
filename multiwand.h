@@ -7,16 +7,22 @@
 
 #define stringify(x) #x
 #define tostring(x) stringify(x)
-#define location __FILE__ ":" tostring(__LINE__)
+#define location __FILE_NAME__ ":" tostring(__LINE__)
+#ifdef DEBUG
 #define logDebug( ... ) fprintf( stderr, location " " __VA_ARGS__ )
+#else
+#define logdebug( ... )
+#endif
+#define logError( ... ) fprintf( stderr, __VA_ARGS__ )
 
 #define ALIGN(bytes) __attribute__ ((aligned(bytes)))
 #define PACKED __attribute__ ((packed))
-#define PACKED_STRUCT(...) struct __VA_ARGS__ PACKED
 
 #ifdef DEBUG
-// NOTE: these are private to libnl3, but it's very handy to have them defined when debugging
-// DO NOT USE IN SOURCE CODE!
+// NOTE: these are private to libnl3, but copied here because
+// it's very helpful to have them defined when source debugging
+
+// !!!! OPAQUE: DO NOT REFERENCE IN SOURCE CODE !!!!
 
 struct nl_addr {
     int a_family;
