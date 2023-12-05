@@ -32,6 +32,23 @@
 typedef unsigned char byte;
 
 #ifdef DEBUG
+
+const char * icmpTypeAsString[] = {
+    [ICMP_ECHOREPLY]         = "Echo Reply",
+    [ICMP_DEST_UNREACH]      = "Destination Unreachable",
+    [ICMP_SOURCE_QUENCH]     = "Source Quench",
+    [ICMP_REDIRECT]          = "Redirect (change route)",
+    [ICMP_ECHO]              = "Echo Request",
+    [ICMP_TIME_EXCEEDED]     = "Time Exceeded",
+    [ICMP_PARAMETERPROB]     = "Parameter Problem",
+    [ICMP_TIMESTAMP]         = "Timestamp Request",
+    [ICMP_TIMESTAMPREPLY]    = "Timestamp Reply",
+    [ICMP_INFO_REQUEST]      = "Information Request",
+    [ICMP_INFO_REPLY]        = "Information Reply",
+    [ICMP_ADDRESS]           = "Address Mask Request",
+    [ICMP_ADDRESSREPLY]      = "Address Mask Reply"
+};
+
 /* map a socket 'family' ID to a string for debugging messages */
 const char * familyAsString[] = {
     [AF_UNSPEC]      = "Unspecified",
@@ -97,6 +114,11 @@ typedef struct {
     uint8_t        payload[384];
 } tICMPpacket;
 
+typedef struct sProbe {
+    struct sProbe * next;
+    uSockAddr       dest;
+} tProbe;
+
 typedef struct sWANroute {
     struct sWANroute * next;
 
@@ -107,10 +129,10 @@ typedef struct sWANroute {
     } intf;
 
     uSockAddr   gateway;
-
     uSockAddr   source;
-
     uint32_t    metric;
+
+    tProbe *    probeList;
 } tWANroute;
 
 typedef struct {
@@ -276,6 +298,37 @@ char * sockAddrToStr( uSockAddr * sockAddr, char * dest, size_t destSize )
  */
 
 /* generic test to see if two socket addresses are on the same subnet */
+bool isSameAddr( uSockAddr * a, uSockAddr * b )
+{
+    if ( a->family != b->family ) {
+        return false;
+    } else {
+        byte *pa;
+        byte *pb;
+        size_t len;
+        switch (a->family)
+        {
+        case AF_INET:
+            pa = (byte *)&a->in.sin_addr;
+            pb = (byte *)&b->in.sin_addr;
+            len = 4;
+            break;
+
+        case AF_INET6:
+            pa = (byte *)&a->in6.sin6_addr;
+            pb = (byte *)&b->in6.sin6_addr;
+            len = 16;
+            break;
+
+        default:
+            return false;
+        }
+
+        return memcmp( pa, pb, len ) == 0;
+    }
+}
+
+/* generic test to see if two socket addresses are on the same subnet */
 bool isSameSubnet( uSockAddr * a, uSockAddr * b, unsigned int maskBitLen )
 {
     if ( a->family != b->family ) {
@@ -410,12 +463,12 @@ size_t makeICMPpacket( struct icmphdr * icmpPkt, uint8_t type, uint8_t code, voi
     return length;
 }
 
-void makeEchoRequest( tICMPpacket * pkt, uSockAddr * srcAddr, uSockAddr * dstAddr )
+void makeEchoRequest( tICMPpacket * pkt,  uSockAddr * srcAddr, uSockAddr * dstAddr, int ttl )
 {
     const char * payload = "connectivity check";
 
     size_t ipHdrLen   = makeIPv4header( &pkt->ip,
-                                        IPPROTO_ICMP, 64, srcAddr, dstAddr );
+                                        IPPROTO_ICMP, ttl, srcAddr, dstAddr );
     size_t icmpHdrLen = makeICMPpacket( &pkt->icmp,
                                         ICMP_ECHO, 0,
                                         (void *)payload, strlen(payload) + 1 );
@@ -607,8 +660,8 @@ int setup( int argc, char * argv[] )
 
 /*
  * ToDo: periodically refresh the WANroute objects, in case the routing table is changed by other
- * processes, e.g. DHCP. If a link starts failing, it should trigger this immediately too, since
- * the link may still be up, but we're probing stale addresses
+ *       processes, e.g. DHCP. If a link starts failing, it should trigger this immediately too,
+ *       since the link itself may still be up, but we're still probing stale addresses.
  */
 int mainLoop( void )
 {
@@ -621,83 +674,92 @@ int mainLoop( void )
         return -ENOMEM;
     }
 
-    makeEchoRequest( packet, &g.wanList->source, &g.wanList->gateway);
-    
+    uSockAddr target;
+    target.family = AF_INET;
+    inet_pton( target.family, "8.8.8.8", &target.in.sin_addr );
     ssize_t rc;
     g.seq = 1;
-    do {
-        struct timeval timeout = {3, 0}; //wait max 3 seconds for a reply
+    for (tWANroute * wan = g.wanList; wan != NULL; wan = wan->next )
+    {
+        logDebug ( "interface %s\n", wan->intf.name );
+        for (int ttl = 1; ttl < 20; ttl++)
+        {
+            makeEchoRequest( packet, &wan->source, &target, ttl);
 
-        tWANroute * wan = g.wanList;
+            struct timeval timeout = {2, 0}; // wait max 2 seconds for a reply
 
-        rc = sendto( wan->intf.socketFD,
-                     packet, packet->ip.tot_len, 0,
-                     &wan->gateway.common, sizeof(wan->gateway) );
+            rc = sendto( wan->intf.socketFD,
+                         packet, packet->ip.tot_len, 0,
+                         &target.common, sizeof(target) );
 
-        if ( rc <= 0 ) {
-            perror( location );
-            break;
-        } else {
-            char sockAddrAsStr[256];
-            sockAddrToStr( &wan->gateway, sockAddrAsStr, sizeof(sockAddrAsStr) );
-            logDebug( "ICMP 'Echo Request' to %s\n", sockAddrAsStr );
-        }
-
-        fd_set read_set;
-        memset( &read_set, 0, sizeof( read_set ) );
-        FD_SET( wan->intf.socketFD, &read_set );
-
-        // wait for a reply with a timeout
-        rc = select( wan->intf.socketFD + 1, &read_set, NULL, NULL, &timeout );
-        if ( rc == 0 ) {
-            logDebug( "timeout: no response received\n" );
-            continue;
-        } else if ( rc < 0 ) {
-            perror( location );
-            break;
-        }
-
-        unsigned char data[2048];
-        uSockAddr srcAddr;
-        socklen_t srcAddrLen = sizeof( srcAddr );
-        rc = recvfrom( wan->intf.socketFD,
-                       data, sizeof( data ), 0,
-                       &srcAddr.common, &srcAddrLen );
-        if ( rc < 0 ) {
-            perror( location );
-            break;
-        } else if ( rc < sizeof( struct icmphdr ) ) {
-            logDebug( "Error: truncated ICMP response (only %ld bytes long)\n", rc );
-            break;
-        } else {
-            const tICMPpacket * rcvdPkt = (tICMPpacket *) data;
-
-            char sockAddrAsStr[256];
-            sockAddrToStr( &srcAddr, sockAddrAsStr, sizeof(sockAddrAsStr) );
-
-            switch (rcvdPkt->icmp.type)
-            {
-            case ICMP_ECHOREPLY:
-                logDebug( "ICMP 'Echo Reply' from %s, id=%d, sequence = %d\n",
-                          sockAddrAsStr,
-                          rcvdPkt->icmp.un.echo.id, rcvdPkt->icmp.un.echo.sequence );
+            if ( rc <= 0 ) {
+                perror( location );
                 break;
+            } else {
+                char sockAddrAsStr[256];
+                sockAddrToStr( &target, sockAddrAsStr, sizeof(sockAddrAsStr) );
+                logDebug( "ICMP 'Echo Request' to %s, seq = %d, ttl %d\n", sockAddrAsStr, g.seq, ttl );
+            }
 
-            case ICMP_DEST_UNREACH:
-                logDebug( "ICMP 'Destination Unreachable' from %s\n", sockAddrAsStr );
+            fd_set read_set;
+            memset( &read_set, 0, sizeof( read_set ) );
+            FD_SET( wan->intf.socketFD, &read_set );
 
-                break;
-
-            case ICMP_HOST_UNREACH:
-                logDebug( "ICMP 'Host Unreachable' from %s\n", sockAddrAsStr );
-                break;
-
-            default:
-                logDebug( "unexpected ICMP packet (type 0x%x) from %s\n", rcvdPkt->icmp.type, sockAddrAsStr );
+            // wait for a reply with a timeout
+            rc = select( wan->intf.socketFD + 1, &read_set, NULL, NULL, &timeout );
+            if ( rc == 0 ) {
+                logDebug( "timeout: no response received\n" );
+                continue;
+            } else if ( rc < 0 ) {
+                perror( location );
                 break;
             }
+
+            unsigned char data[2048];
+            uSockAddr srcAddr;
+            socklen_t srcAddrLen = sizeof( srcAddr );
+            rc = recvfrom( wan->intf.socketFD,
+                           data, sizeof( data ), 0,
+                           &srcAddr.common, &srcAddrLen );
+            if ( rc < 0 ) {
+                perror( location );
+                break;
+            } else if ( rc < sizeof( struct icmphdr ) ) {
+                logDebug( "Error: truncated ICMP response (only %ld bytes long)\n", rc );
+                break;
+            } else {
+                const tICMPpacket * rcvdPkt = (tICMPpacket *) data;
+
+                char sockAddrAsStr[256];
+                sockAddrToStr( &srcAddr, sockAddrAsStr, sizeof(sockAddrAsStr) );
+
+                int type = rcvdPkt->icmp.type;
+                if (type == ICMP_TIME_EXCEEDED) {
+
+                }
+#if DEBUG
+                const char * typeString = NULL;
+                if (type < ICMP_MAXTYPE) {
+                    typeString = icmpTypeAsString[type];
+                }
+                if (typeString == NULL) {
+                    typeString = "<error>";
+                }
+
+                logDebug( "ICMP \'%s\' from %s, seq = %d, id=%d\n",
+                          typeString,
+                          sockAddrAsStr,
+                          rcvdPkt->icmp.un.echo.sequence, rcvdPkt->icmp.un.echo.id );
+
+                if (type == ICMP_ECHOREPLY && isSameAddr( &srcAddr, &target ))
+                {
+                    logDebug("reached target\n\n");
+                    break;
+                }
+#endif
+            }
         }
-    } while ( g.seq++ < 20 );
+    }
 
     return 0;
 }
