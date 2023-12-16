@@ -19,8 +19,78 @@
 #define PACKED __attribute__ ((packed))
 
 #ifdef DEBUG
+
+const char *icmpTypeAsString[] = {
+        [ICMP_ECHOREPLY]         = "Echo Reply",
+        [ICMP_DEST_UNREACH]      = "Destination Unreachable",
+        [ICMP_SOURCE_QUENCH]     = "Source Quench",
+        [ICMP_REDIRECT]          = "Redirect (change route)",
+        [ICMP_ECHO]              = "Echo Request",
+        [ICMP_TIME_EXCEEDED]     = "Time Exceeded",
+        [ICMP_PARAMETERPROB]     = "Parameter Problem",
+        [ICMP_TIMESTAMP]         = "Timestamp Request",
+        [ICMP_TIMESTAMPREPLY]    = "Timestamp Reply",
+        [ICMP_INFO_REQUEST]      = "Information Request",
+        [ICMP_INFO_REPLY]        = "Information Reply",
+        [ICMP_ADDRESS]           = "Address Mask Request",
+        [ICMP_ADDRESSREPLY]      = "Address Mask Reply"
+};
+
+/* map a socket 'family' ID to a string for debugging messages */
+const char *familyAsString[] = {
+        [AF_UNSPEC]      = "Unspecified",
+        [AF_LOCAL]       = "Local",
+        [AF_INET]        = "IPv4",
+        [AF_AX25]        = "Amateur Radio AX.25",
+        [AF_IPX]         = "Novell Internet Protocol",
+        [AF_APPLETALK]   = "Appletalk DDP",
+        [AF_NETROM]      = "Amateur Radio NetROM",
+        [AF_BRIDGE]      = "Multi-protocol bridge",
+        [AF_ATMPVC]      = "ATM PVCs",
+        [AF_X25]         = "X.25",
+        [AF_INET6]       = "IPv6",
+        [AF_ROSE]        = "Amateur Radio X.25 PLP",
+        [AF_DECnet]      = "DECnet",
+        [AF_NETBEUI]     = "802.2LLC",
+        [AF_SECURITY]    = "Security callback pseudo AF",
+        [AF_KEY]         = "PF_KEY key management",
+        [AF_NETLINK]     = "Netlink",
+        [AF_PACKET]      = "Packet",
+        [AF_ASH]         = "Ash",
+        [AF_ECONET]      = "Acorn Econet",
+        [AF_ATMSVC]      = "ATM SVCs",
+        [AF_RDS]         = "RDS",
+        [AF_SNA]         = "Linux SNA",
+        [AF_IRDA]        = "IRDA",
+        [AF_PPPOX]       = "PPPoX",
+        [AF_WANPIPE]     = "Wanpipe API",
+        [AF_LLC]         = "Linux LLC",
+        [AF_IB]          = "Native InfiniBand",
+        [AF_MPLS]        = "MPLS",
+        [AF_CAN]         = "CANbus",
+        [AF_TIPC]        = "TIPC",
+        [AF_BLUETOOTH]   = "Bluetooth",
+        [AF_IUCV]        = "IUCV",
+        [AF_RXRPC]       = "RxRPC",
+        [AF_ISDN]        = "mISDN",
+        [AF_PHONET]      = "Phonet",
+        [AF_IEEE802154]  = "IEEE 802.15.4",
+        [AF_CAIF]        = "CAIF",
+        [AF_ALG]         = "Algorithm",
+        [AF_NFC]         = "NFC",
+        [AF_VSOCK]       = "vSockets",
+        [AF_KCM]         = "Kernel Connection Multiplexer",
+        [AF_QIPCRTR]     = "Qualcomm IPC Router",
+        [AF_SMC]         = "SMC",
+        [AF_XDP]         = "XDP",
+        [AF_MCTP]        = "Management component transport protocol"
+};
+#endif
+
+
+#ifdef DEBUG
 // NOTE: these are private to libnl3, but copied here because
-// it's very helpful to have them defined when source debugging
+// it's very helpful to have them defined when sourceV4 debugging
 
 // !!!! OPAQUE: DO NOT REFERENCE IN SOURCE CODE !!!!
 
@@ -84,5 +154,6 @@ struct rtnl_route {
     uint32_t rt_flag_mask;
 };
 #endif
+
 
 #endif //MULTIWAND_MULTIWAND_H

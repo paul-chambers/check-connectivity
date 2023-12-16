@@ -5,6 +5,7 @@
 /* the usual suspects */
 #include <stdlib.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <unistd.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -13,6 +14,7 @@
 /* generic Linux network stuff */
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netinet/ip6.h>
 #include <netinet/ip_icmp.h>
 #include <linux/rtnetlink.h>
 
@@ -31,125 +33,87 @@
 
 typedef unsigned char byte;
 
-#ifdef DEBUG
-
-const char * icmpTypeAsString[] = {
-    [ICMP_ECHOREPLY]         = "Echo Reply",
-    [ICMP_DEST_UNREACH]      = "Destination Unreachable",
-    [ICMP_SOURCE_QUENCH]     = "Source Quench",
-    [ICMP_REDIRECT]          = "Redirect (change route)",
-    [ICMP_ECHO]              = "Echo Request",
-    [ICMP_TIME_EXCEEDED]     = "Time Exceeded",
-    [ICMP_PARAMETERPROB]     = "Parameter Problem",
-    [ICMP_TIMESTAMP]         = "Timestamp Request",
-    [ICMP_TIMESTAMPREPLY]    = "Timestamp Reply",
-    [ICMP_INFO_REQUEST]      = "Information Request",
-    [ICMP_INFO_REPLY]        = "Information Reply",
-    [ICMP_ADDRESS]           = "Address Mask Request",
-    [ICMP_ADDRESSREPLY]      = "Address Mask Reply"
-};
-
-/* map a socket 'family' ID to a string for debugging messages */
-const char * familyAsString[] = {
-    [AF_UNSPEC]      = "Unspecified",
-    [AF_LOCAL]       = "Local",
-    [AF_INET]        = "IPv4",
-    [AF_AX25]        = "Amateur Radio AX.25",
-    [AF_IPX]         = "Novell Internet Protocol",
-    [AF_APPLETALK]   = "Appletalk DDP",
-    [AF_NETROM]      = "Amateur Radio NetROM",
-    [AF_BRIDGE]      = "Multiprotocol bridge",
-    [AF_ATMPVC]      = "ATM PVCs",
-    [AF_X25]         = "X.25",
-    [AF_INET6]       = "IPv6",
-    [AF_ROSE]        = "Amateur Radio X.25 PLP",
-    [AF_DECnet]      = "DECnet",
-    [AF_NETBEUI]     = "802.2LLC",
-    [AF_SECURITY]    = "Security callback pseudo AF",
-    [AF_KEY]         = "PF_KEY key management",
-    [AF_NETLINK]     = "Netlink",
-    [AF_PACKET]      = "Packet",
-    [AF_ASH]         = "Ash",
-    [AF_ECONET]      = "Acorn Econet",
-    [AF_ATMSVC]      = "ATM SVCs",
-    [AF_RDS]         = "RDS",
-    [AF_SNA]         = "Linux SNA",
-    [AF_IRDA]        = "IRDA",
-    [AF_PPPOX]       = "PPPoX",
-    [AF_WANPIPE]     = "Wanpipe API",
-    [AF_LLC]         = "Linux LLC",
-    [AF_IB]          = "Native InfiniBand",
-    [AF_MPLS]        = "MPLS",
-    [AF_CAN]         = "CANbus",
-    [AF_TIPC]        = "TIPC",
-    [AF_BLUETOOTH]   = "Bluetooth",
-    [AF_IUCV]        = "IUCV",
-    [AF_RXRPC]       = "RxRPC",
-    [AF_ISDN]        = "mISDN",
-    [AF_PHONET]      = "Phonet",
-    [AF_IEEE802154]  = "IEEE 802.15.4",
-    [AF_CAIF]        = "CAIF",
-    [AF_ALG]         = "Algorithm",
-    [AF_NFC]         = "NFC",
-    [AF_VSOCK]       = "vSockets",
-    [AF_KCM]         = "Kernel Connection Multiplexer",
-    [AF_QIPCRTR]     = "Qualcomm IPC Router",
-    [AF_SMC]         = "SMC",
-    [AF_XDP]         = "XDP",
-    [AF_MCTP]        = "Management component transport protocol"
-};
-#endif
 
 typedef union {
-    sa_family_t          family;
-    struct sockaddr      common;
-    struct sockaddr_in   in;
-    struct sockaddr_in6  in6;
-    struct sockaddr_nl   nl;
+    sa_family_t family;
+    struct sockaddr common;
+    struct sockaddr_in in;
+    struct sockaddr_in6 in6;
+    struct sockaddr_nl nl;
 } uSockAddr;
 
-typedef struct {
-    struct iphdr   ip;
-    struct icmphdr icmp;
-    uint8_t        payload[384];
-} tICMPpacket;
+typedef union {
+    struct {
+        struct iphdr hdr;
+        struct icmphdr icmp;
+        union {
+            struct iphdr timeExceeded;
+        } ext;
+    } v4;
+    struct {
+        struct ip6_hdr hdr;
+        union {
+            struct icmphdr hdr;
+        } icmp;
+    } v6;
+    byte * raw;
+} tRawPacket;
 
-typedef struct sProbe {
-    struct sProbe * next;
-    uSockAddr       dest;
-} tProbe;
+typedef struct sV4List {
+    struct sV4List *    next;
+    struct sockaddr_in  addr;
+} tV4Entry;
+
+typedef struct sV6List {
+    struct sV6List *    next;
+    struct sockaddr_in6 addr;
+} tV6Entry;
+
+typedef struct sAddrList {
+    tV4Entry * v4;
+    tV6Entry * v6;
+} tAddrList;
 
 typedef struct sWANroute {
-    struct sWANroute * next;
+    struct sWANroute *  next;
 
-    struct {
-        int             socketFD;
-        int             index;
-        const char *    name;
-    } intf;
+    sa_family_t         family;
+    struct nl_addr *    source;
+    struct nl_addr *    gateway;
 
-    uSockAddr   gateway;
-    uSockAddr   source;
     uint32_t    metric;
-
-    tProbe *    probeList;
+    int         scope;
 } tWANroute;
+
+typedef struct sWANinterface {
+    struct sWANinterface * next;
+
+    int           socketFD;
+    int           index;
+    const char *  name;
+
+    tAddrList     source;
+
+    tWANroute *   wanRoutes;
+} tWANinterface;
 
 typedef struct {
     struct {
-        pid_t               pid;
-        const char *        name;
+        pid_t           pid;
+        const char *    name;
     } my;
-    struct {
-        struct nl_sock *    socket;
-    } netlink;
-    uint16_t                seq;
-    tICMPpacket *           packetList;
-    tWANroute *             wanList;
 
-    struct nl_cache *       routeCache;
-    struct nl_cache *       linkCache;
-    struct nl_cache *       addrCache;
+    struct {
+        struct nl_sock * socket;
+    } netlink;
+
+    uint16_t            seq;
+    tRawPacket *       packetList;
+    tWANinterface *     wanList;
+
+    struct nl_cache *   addrCache;
+    struct nl_cache *   linkCache;
+    struct nl_cache *   routeCache;
 
     // libnl3 configuration for dumping structures
     struct nl_dump_params dp;
@@ -159,15 +123,14 @@ tGlobals g;
 
 /************************************************************************************/
 
-void dumpHex( void * ptr, size_t len )
+void dumpHex( void *ptr, size_t len )
 {
-    const char * sep;
+    const char *sep;
     unsigned int offset = 0;
 
     if ( ptr == NULL || len == 0 ) return;
-    do  {
-        switch ( offset % 16 )
-        {
+    do {
+        switch ( offset % 16 ) {
         case 0:
             sep = " ";
             fprintf( stderr, "%04x: ", offset );
@@ -187,23 +150,22 @@ void dumpHex( void * ptr, size_t len )
             sep = " ";
             break;
         }
-        fprintf( stderr, "%02x%s", ((uint8_t *)ptr)[offset], sep );
+        fprintf( stderr, "%02x%s", ((uint8_t *) ptr)[offset], sep );
         offset++;
         len--;
-    } while ( len > 0);
+    } while ( len > 0 );
 
     fprintf( stderr, "\n" );
 }
 
-void dumpDec( void * ptr, size_t len )
+void dumpDec( void *ptr, size_t len )
 {
-    const char * sep;
+    const char *sep;
     unsigned int offset = 0;
 
     if ( ptr == NULL || len == 0 ) return;
-    do  {
-        switch ( offset % 16 )
-        {
+    do {
+        switch ( offset % 16 ) {
         case 15:
             sep = (len > 1) ? "\n" : "";
             break;
@@ -212,27 +174,27 @@ void dumpDec( void * ptr, size_t len )
             sep = " ";
             break;
         }
-        fprintf( stderr, "%d%s", ((uint8_t *)ptr)[offset], sep );
+        fprintf( stderr, "%d%s", ((uint8_t *) ptr)[offset], sep );
         offset++;
         len--;
-    } while ( len > 0);
+    } while ( len > 0 );
 
     fprintf( stderr, "\n" );
 }
 
-void ipv6ToStr( byte * p, char * str, size_t strSize )
+void ipv6ToStr( const byte *p, char *str, size_t strSize )
 {
     uint16_t word;
     bool doneDouble = false;
-    for ( int i = 0; i < 8 && strSize > 5; i++ )
-    {
+    int size = snprintf( str, strSize, "IPv6: " );
+    str += size;
+    strSize -= size;
+
+    for ( int i = 0; i < 8 && strSize > 5; i++ ) {
         word = (p[0] << 8) | p[1];
         p += 2;
 
-        fprintf( stderr, "%d: 0x%04x\n", i, word);
-
-        if ( word == 0 && doneDouble == false )
-        {
+        if ( word == 0 && doneDouble == false ) {
             *str++ = ':';
             --strSize;
             while ( p[0] == 0 && p[1] == 0 ) {
@@ -241,10 +203,10 @@ void ipv6ToStr( byte * p, char * str, size_t strSize )
             }
             doneDouble = true;
         } else {
-            int size = snprintf( str, strSize, "%x", word );
+            size = snprintf( str, strSize, "%x", word );
             str += size;
             strSize -= size;
-            if (i < 7) {
+            if ( i < 7 ) {
                 *str++ = ':';
                 --strSize;
             }
@@ -252,71 +214,67 @@ void ipv6ToStr( byte * p, char * str, size_t strSize )
     }
 }
 
-char * sockAddrToStr( uSockAddr * sockAddr, char * dest, size_t destSize )
+/**
+ * Populate a string with a representation of the sockaddr provided.
+ * Only handles IPv4 and IPv6 for now.
+ */
+char *sockAddrToStr( struct sockaddr * sockAddr, char *dest, size_t destSize )
 {
-    byte * d = dest;
-    size_t dl = destSize;
+    byte *p;
 
-    byte * p;
-
-    switch (sockAddr->family)
-    {
+    switch ( sockAddr->sa_family ) {
     case AF_UNSPEC:
         snprintf( dest, destSize,
-                  "<address family not specified)>");
+                  "<address family not specified>" );
         break;
+
     case AF_INET:
-        p = (byte *)&sockAddr->in.sin_addr;
+        p = (byte *) &((struct sockaddr_in *)sockAddr)->sin_addr;
         snprintf( dest, destSize,
-                  "%s: %d.%d.%d.%d",
-                  familyAsString[ sockAddr->family ],
+                  "IPv4: %d.%d.%d.%d",
                   p[0], p[1], p[2], p[3] );
         break;
 
     case AF_INET6:
-        ipv6ToStr( (byte *) &sockAddr->in6.sin6_addr, dest, destSize );
+        ipv6ToStr((byte *) &((struct sockaddr_in6 *)sockAddr)->sin6_addr, dest, destSize );
         break;
 
     default:
         snprintf( dest, destSize,
                   "<unsupported socket address family (%s)>",
-                  familyAsString[ sockAddr->family ]);
+                  familyAsString[sockAddr->sa_family] );
         break;
     }
     return dest;
 }
 
-/*
-        char ipv6str[256];
-        byte ip6Addr[] = { 0xfe,0xdc,0xba,0x98,0x76,0x54,0x32,0x10,
-                           0x00,0x00,0x00,0x00,0x12,0x34,0x56,0x78 };
-        uSockAddr addr;
-        addr.family = AF_INET6;
-        memcpy( &addr.in6.sin6_addr, ip6Addr, sizeof(addr.in6.sin6_addr) );
-        sockAddrToStr( &addr, ipv6str, sizeof(ipv6str));
-        logDebug( "test: \'%s\'\n", ipv6str );
+/**
+ * Generic test to see if two socket addresses are the same
  */
-
-/* generic test to see if two socket addresses are on the same subnet */
-bool isSameAddr( uSockAddr * a, uSockAddr * b )
+bool isSameAddr( uSockAddr *a, uSockAddr *b )
 {
+    char aAsStr[128];
+    char bAsStr[128];
+    sockAddrToStr( &a->common, aAsStr, sizeof(aAsStr));
+    sockAddrToStr( &b->common, bAsStr, sizeof(bAsStr));
+    logDebug( "a %s, b%s\n", aAsStr, bAsStr);
+
     if ( a->family != b->family ) {
         return false;
     } else {
         byte *pa;
         byte *pb;
         size_t len;
-        switch (a->family)
-        {
+        switch ( a->family ) {
         case AF_INET:
-            pa = (byte *)&a->in.sin_addr;
-            pb = (byte *)&b->in.sin_addr;
+            pa = (byte *) &a->in.sin_addr;
+            pb = (byte *) &b->in.sin_addr;
             len = 4;
             break;
 
         case AF_INET6:
-            pa = (byte *)&a->in6.sin6_addr;
-            pb = (byte *)&b->in6.sin6_addr;
+            pa = (byte *) &a->in6.sin6_addr;
+            pb = (byte *) &b->in6.sin6_addr;
             len = 16;
             break;
 
@@ -329,64 +287,59 @@ bool isSameAddr( uSockAddr * a, uSockAddr * b )
 }
 
 /* generic test to see if two socket addresses are on the same subnet */
-bool isSameSubnet( uSockAddr * a, uSockAddr * b, unsigned int maskBitLen )
+bool isSameSubnet( uSockAddr *a, uSockAddr *b, unsigned int maskBitLen )
 {
     if ( a->family != b->family ) {
-        return false;
+        logDebug( "family doesn't match (%d,%d)\n", a->family, b->family );
     } else {
         byte *pa;
         byte *pb;
-        switch (a->family)
-        {
+        switch ( a->family ) {
         case AF_INET:
-            pa = (byte *)&a->in.sin_addr;
-            pb = (byte *)&b->in.sin_addr;
-            break;
+            pa = (byte *) &a->in.sin_addr;
+            pb = (byte *) &b->in.sin_addr;
+
+            for ( int len = (int) maskBitLen; len > 0; len -= 8 ) {
+                byte mask = ~(0xff >> len);
+                // logDebug( "0x%02x 0x%02x 0x%02x %d\n", *pa, *pb, mask, len);
+                if ((*pa++ & mask) != (*pb++ & mask)) {
+                    return false;
+                }
+            }
+            return true;
 
         case AF_INET6:
-            pa = (byte *)&a->in6.sin6_addr;
-            pb = (byte *)&b->in6.sin6_addr;
-            break;
-
-        default:
-            return false;
+            // pa = (byte *)&a->in6.sin6_addr;
+            // pb = (byte *)&b->in6.sin6_addr;
+            return true;
         }
-
-        for ( unsigned int len = maskBitLen; len > 0; len -= 8 )
-        {
-            byte mask = ~((~0) >> len);
-            if ( (*pa++ & mask) != (*pb++ & mask) )
-            {
-                return false;
-            }
-        }
-        return true;
     }
+    return false;
 }
 
 /*
  * RFC 1071 checksum calculation
  */
-unsigned int headerChecksum( void * header, size_t length )
+unsigned int headerChecksum( void *header, size_t length )
 {
-    register uint16_t * word = (uint16_t *)header;
-    register uint32_t   sum  = 0;
+    register uint16_t *word = (uint16_t *) header;
+    register uint32_t sum = 0;
 
     // Sum adjacent 16 bit words
-    while ( length > 1) {
+    while ( length > 1 ) {
         sum += *word++;
         length -= 2;
     }
 
     // if length was odd, there's one more byte to add. Assume upper 8 bits are zero.
-    if (length > 0) {
-        sum += *(uint8_t *)word;
+    if ( length > 0 ) {
+        sum += *(uint8_t *) word;
     }
 
     // deferred carry processing: dd the carry bits that overflowed into the top
     // 16 bits back into the lower 16 bits. Repeat this while there are still
     // carry bits set in the upper 16 bits.
-    while (sum >> 16) {
+    while ( sum >> 16 ) {
         sum = (sum & 0xffff) + (sum >> 16);
     }
 
@@ -394,9 +347,36 @@ unsigned int headerChecksum( void * header, size_t length )
     return ~sum;
 }
 
+void addSockAddrToList( struct sockaddr * addr, tAddrList * addrList )
+{
+    switch ( addr->sa_family ) {
+    case AF_INET:
+        {
+            tV4Entry * v4Entry = calloc( 1, sizeof( tV4Entry ));
+            memcpy( &v4Entry->addr, addr, sizeof(v4Entry->addr));
+            v4Entry->next = addrList->v4;
+            addrList->v4 = v4Entry;
+        }
+        break;
+
+    case AF_INET6:
+        {
+            tV6Entry * v6Entry = calloc( 1, sizeof( tV6Entry ));
+            memcpy( &v6Entry->addr, addr, sizeof(v6Entry->addr));
+            v6Entry->next = addrList->v6;
+            addrList->v6 = v6Entry;
+        }
+        break;
+
+    default:
+        logDebug( "unsupported address family (%s)\n", familyAsString[addr->sa_family] );
+        break;
+    }
+}
+
 /************************************************************************************/
 
-int newICMPsocket( const char * interface )
+int newICMPsocket( const char *interface )
 {
     int result = socket( AF_INET, SOCK_RAW, IPPROTO_ICMP );
     if ( result < 0 ) {
@@ -405,18 +385,16 @@ int newICMPsocket( const char * interface )
                       "Please either run %s as root, or grant it the CAP_NET_RAW capability (preferred).\n",
                       g.my.name, g.my.name );
             return -errno;
-        } else perror( location " newICMPsocket" );
+        } else { perror( location " newICMPsocket" ); }
     } else {
         int on = 1;
         if ( setsockopt( result,
                          IPPROTO_IP, IP_HDRINCL,
-                         &on, sizeof(on)) < 0 )
-        {
+                         &on, sizeof(on)) < 0 ) {
             perror( location );
-        } else if (setsockopt( result,
-                               SOL_SOCKET, SO_BINDTODEVICE,
-                               interface, strlen(interface)) < 0 )
-        {
+        } else if ( setsockopt( result,
+                                SOL_SOCKET, SO_BINDTODEVICE,
+                                interface, strlen( interface )) < 0 ) {
             perror( location );
         } //else logDebug( "socket fd for interface %s is %d\n", interface, result );
     }
@@ -425,136 +403,293 @@ int newICMPsocket( const char * interface )
 }
 
 
-size_t makeIPv4header( struct iphdr * iph, int protocol, int ttl, uSockAddr * srcAddr, uSockAddr * dstAddr )
+size_t makeIPv4header( struct iphdr *iph, int protocol, int ttl,
+                       struct sockaddr_in * srcAddr,
+                       struct sockaddr_in * dstAddr )
 {
     int length = -1;
-    if (srcAddr->family == AF_INET && dstAddr->family == AF_INET)
-    {
-        length        = 20;
-        iph->version  = IPVERSION;
-        iph->ihl      = length / 4;
-        iph->tos      = 0;                        // default QOS class
-        iph->id       = htons(g.seq++);  // monotonically-increasing sequence ID
-        iph->frag_off = htons(IP_DF);    // don't fragment
-        iph->ttl      = ttl;
-        iph->protocol = protocol;
-        memcpy( &iph->saddr, &srcAddr->in.sin_addr, sizeof(iph->saddr) );
-        memcpy( &iph->daddr, &dstAddr->in.sin_addr, sizeof(iph->daddr) );
-
-        // checksum field must be zero when the checksum calculation is done,
-        // We can't calculate the checksum until the rest of the packet has been built and the length is known.
-        iph->check = 0;
+    length = 20;
+    iph->version = IPVERSION;
+    iph->ihl = length / 4;
+    iph->tos = 0;                        // default QOS class
+    iph->id = htons(  (0x06 << 8) | (g.seq++ & 0xFF) );  // monotonically-increasing sequence ID
+    iph->frag_off = htons( IP_DF );    // don't fragment
+    iph->ttl = ttl;
+    iph->protocol = protocol;
+    if ( srcAddr != NULL && srcAddr->sin_family == AF_INET ) {
+        memcpy( &iph->saddr, &srcAddr->sin_addr, sizeof(iph->saddr));
     }
+    if ( dstAddr != NULL && dstAddr->sin_family == AF_INET ) {
+        memcpy( &iph->daddr, &dstAddr->sin_addr, sizeof(iph->daddr));
+    }
+    // checksum field must be zero when the checksum calculation is done,
+    // We can't calculate the checksum until the rest of the packet has been built and the length is known.
+    iph->check = 0;
 
     return length;
 }
 
-size_t makeICMPpacket( struct icmphdr * icmpPkt, uint8_t type, uint8_t code, void * body, size_t bodyLen )
+size_t makeICMPv4packet( struct icmphdr *icmpHdr, uint8_t type, uint8_t code, void *body, size_t bodyLen )
 {
     size_t length = sizeof( struct icmphdr ) + bodyLen;
-    icmpPkt->type       = type;
-    icmpPkt->code       = code;
-    icmpPkt->checksum   = 0;
-    icmpPkt->un.echo.id = g.my.pid;
-    icmpPkt->un.echo.sequence = g.seq;
-    memcpy(((uint8_t *)icmpPkt) + sizeof(struct icmphdr), body, bodyLen);
+    icmpHdr->type = type;
+    icmpHdr->code = code;
+    icmpHdr->checksum = 0;
+    icmpHdr->un.echo.id = g.my.pid;
+    icmpHdr->un.echo.sequence = g.seq;
+    memcpy( ((uint8_t *) icmpHdr) + sizeof( struct icmphdr ), body, bodyLen );
 
-    icmpPkt->checksum = headerChecksum( icmpPkt, length );
+    icmpHdr->checksum = headerChecksum( icmpHdr, length );
     return length;
 }
 
-void makeEchoRequest( tICMPpacket * pkt,  uSockAddr * srcAddr, uSockAddr * dstAddr, int ttl )
+void makeEchoRequestV4( tRawPacket *pkt, struct sockaddr_in * srcAddr, struct sockaddr_in * dstAddr, int ttl )
 {
-    const char * payload = "connectivity check";
+    const char *payload = "connectivity check";
 
-    size_t ipHdrLen   = makeIPv4header( &pkt->ip,
-                                        IPPROTO_ICMP, ttl, srcAddr, dstAddr );
-    size_t icmpHdrLen = makeICMPpacket( &pkt->icmp,
-                                        ICMP_ECHO, 0,
-                                        (void *)payload, strlen(payload) + 1 );
-    pkt->ip.tot_len   = ipHdrLen + icmpHdrLen;
-    pkt->ip.check     = headerChecksum( pkt, pkt->ip.tot_len );
+    size_t ipHdrLen = makeIPv4header( &pkt->v4.hdr,
+                                      IPPROTO_ICMP, ttl, srcAddr, dstAddr );
+    size_t icmpHdrLen = makeICMPv4packet( &pkt->v4.icmp,
+                                          ICMP_ECHO, 0,
+                                          (void *) payload, strlen( payload ) + 1 );
+    pkt->v4.hdr.tot_len = ipHdrLen + icmpHdrLen;
+    pkt->v4.hdr.check = headerChecksum( pkt, pkt->v4.hdr.tot_len );
 }
 
-tWANroute * allocWANroute( void )
+#if 0
+tWANinterface * getWANinterface( unsigned int intfIndex, const char *intfName )
 {
-    tWANroute * result = calloc( 1, sizeof(tWANroute) );
-    if ( result != NULL ) {
-        result->next = g.wanList;
-        g.wanList = result;
+    tWANinterface *result = NULL;
+    for ( result = g.wanList; result != NULL; result = result->next ) {
+        if ( result->index == intfIndex ) {
+            return result;
+        }
+    }
+
+    /* only reach this point if we con't already have a WANinterface
+     * object for this intfIndex. So construct one. */
+    result = calloc( 1, sizeof( tWANinterface ));
+    if ( result != NULL) {
+        result->socketFD = newICMPsocket( intfName );
+        if ( result->socketFD <= 0 ) {
+            /* if we can't open a raw ICMP socket, can't do anything useful... */
+            logError( "unable to open raw socket for interface %s", intfName );
+            free( result );
+            result = NULL;
+        } else {
+            logDebug( "---- link name: %s (%d)\n", intfName, intfIndex );
+            result->index = intfIndex;
+            result->name = strdup( intfName );
+
+            result->next = g.wanList;
+            g.wanList = result;
+        }
     }
 
     return result;
 }
+#endif
 
-in_addr_t getIPv4Addr( const struct nl_addr * addrObj )
-{
-    uint8_t * addr = nl_addr_get_binary_addr( addrObj );
-    unsigned int len = nl_addr_get_len( addrObj );
-
-//    logDebug( "source in memory: " );
-//    dumpDec( source, len );
-
-    in_addr_t s_addr = 0;
-    for ( int i = 0; i < len; i++ ) {
-        s_addr = (s_addr << 8) + *addr++;
-    }
-    return s_addr;
-}
-
-in_addr_t getIPv4Mask( const struct nl_addr * addrObj )
-{
-    /* calculate the subnet mask */
-    unsigned int prefix = nl_addr_get_prefixlen( addrObj );
-    unsigned int bitWidth = nl_addr_get_len( addrObj ) * 8;
-
-    in_addr_t mask = ~((1 << (bitWidth - prefix)) - 1);
-    logDebug( "mask 0x%08x\n", mask );
-    return mask;
-}
-
-/* look for addresses associated with the given tWANroute object passed in arg */
-void forEachAddrObj( struct nl_object * nlObj, void * arg )
+/* look for addresses associated with the given tWANinterface object passed in arg */
+void forEachAddrObj( struct nl_object *nlObj, void *arg )
 {
     // we know it's an address object, since this callback is only ever used with the address cache
     struct rtnl_addr * addrObj = (struct rtnl_addr *) nlObj;
-    tWANroute * wan = arg;
 
-    /* this address object is associated with the interface of interest */
-    if ( rtnl_addr_get_ifindex( addrObj ) == wan->intf.index )
-    {
-        // nl_object_dump( nlObj, &g.dp);
 
-        /* if we have not yet found a source address with the
-         * same subnet as the gateway, and this address is IPv4 */
-        if ( wan->source.family == AF_UNSPEC )
-        {
-            struct nl_addr * localAddr = rtnl_addr_get_local( addrObj );
-
-            socklen_t sockLen = sizeof( wan->source );
-            nl_addr_fill_sockaddr( localAddr, &wan->source.common, &sockLen);
+    for ( tWANinterface * wan = g.wanList; wan != NULL; wan = wan->next ) {
+        /* this address object is associated with the interface of interest */
+        if ( rtnl_addr_get_ifindex( addrObj ) == wan->index ) {
 
 #ifdef DEBUG
-            char ipAddrAsStr[256];
-            nl_addr2str( localAddr, ipAddrAsStr, sizeof(ipAddrAsStr) );
-            char sockAddrAsStr[256];
-            sockAddrToStr( &wan->source, sockAddrAsStr, sizeof(sockAddrAsStr) );
-            logDebug( "source: %s (ip: %s)\n", sockAddrAsStr, ipAddrAsStr );
+            int intfIndex = rtnl_addr_get_ifindex( addrObj );
+            char intfName[128];
+            rtnl_link_i2name( g.linkCache, intfIndex, intfName, sizeof(intfName) );
+            logDebug( "---- Address: %s\n", intfName );
+            // nl_object_dump( nlObj, &g.dp);
 #endif
 
-            /* If this source address isn't in the same subnet as the gateway
-             * address, undo what we just did.
-             * This should not be common, but may occur if there are multiple IPv4
-             * addresses associated with the same interface ('multi-homed') */
-            if ( !isSameSubnet( &wan->source, &wan->gateway, nl_addr_get_prefixlen( localAddr)) )
-            {
-                /* This source address won't reach the gateway. So keep looking. */
-                wan->source.family = AF_UNSPEC;
-                logDebug( "subnet doesn't match\n" );
-            }
+            struct nl_addr * sourceAddr = rtnl_addr_get_local( addrObj );
+            struct sockaddr srcAddr;
+            socklen_t srcLen = sizeof(srcAddr);
+            nl_addr_fill_sockaddr( sourceAddr, &srcAddr, &srcLen );
+            addSockAddrToList( &srcAddr, &wan->source );
 
-            logDebug( "----\n" );
+#ifdef DEBUG
+            char sourceAsStr[128];
+            nl_addr2str( sourceAddr, sourceAsStr, sizeof(sourceAsStr));
+
+            int scope = rtnl_addr_get_scope( addrObj );
+            char scopeAsStr[128];
+            rtnl_scope2str( scope, scopeAsStr, sizeof(scopeAsStr));
+
+            unsigned int flags = rtnl_addr_get_flags( addrObj );
+            char flagsAsStr[256];
+            rtnl_addr_flags2str( flags, flagsAsStr, sizeof( flagsAsStr ));
+
+            logDebug( "%s source: %s scope: %s flags: %s\n", wan->name, sourceAsStr, scopeAsStr, flagsAsStr );
+#endif
+            for ( tWANroute * route = wan->wanRoutes; route != NULL; route = route->next ) {
+#ifdef DEBUG
+                char gatewayAsStr[256];
+                nl_addr2str( route->gateway, gatewayAsStr, sizeof(gatewayAsStr));
+                const char * match = "does not match";
+                if ( nl_addr_cmp_prefix( sourceAddr, route->gateway ) == 0 )
+                {
+                    match = "matches";
+                }
+                logDebug( " - %s %s gateway: %s\n", match, wan->name, gatewayAsStr );
+#endif
+            }
+            break;
         }
+    }
+
+
+#if 0
+
+        tWANinterface * route = NULL;
+        switch ( nl_addr_get_family( sourceAddr))
+        {
+        case AF_INET:
+            route = &wan->route.v4;
+            break;
+
+        case AF_INET6:
+            route = &wan->route.v6;
+            break;
+        }
+        if ( route->gateway != NULL && nl_addr_cmp_prefix( route->gateway, sourceAddr) == 0 )
+        {
+            /* remember the interface source address */
+            route->source = nl_addr_clone( sourceAddr );
+        }
+
+        uSockAddr sourceAddr;
+        socklen_t sourceLen = sizeof( sourceAddr );
+        nl_addr_fill_sockaddr( sourceAddr, &sourceAddr.common, &sourceLen);
+
+
+        int prefixLen = nl_addr_get_prefixlen( sourceAddr );
+        logDebug("prefix len: %d\n", prefixLen );
+
+        switch( nl_addr_get_family( sourceAddr ) )
+        {
+        case AF_INET:
+            /* If this IPv4 source address isn't in the same subnet as the gateway address, ignore it.
+             * This should not be common, but may occur if there are multiple IPv4 addresses associated
+             * with the same interface (i.e. it is 'multi-homed') */
+            if ( isSameSubnet( &sourceAddr,
+                               &wan->ip.v4.gateway,
+                               prefixLen))
+            {
+                memcpy( &wan->ip.v4.source, &sourceAddr, sourceLen );
+            } else {
+                /* This source address can't reach the gateway. So keep looking. */
+                logDebug( "not in same subnet as gateway - ignored\n" );
+            }
+            break;
+
+        case AF_INET6:
+            memcpy( &wan->ip.v6.source, &sourceAddr, sourceLen );
+            break;
+
+        default:
+            logError( "family of source address is not supported - ignored" );
+            break;
+        }
+#endif
+}
+
+tWANinterface * getInterface( int intfIndex )
+{
+    tWANinterface * interface;
+
+    for ( interface = g.wanList; interface != NULL; interface = interface->next ) {
+        if ( interface->index == intfIndex ) {
+            /* we found an existing tWANinterface */
+            break;
+        }
+    }
+    if ( interface == NULL) {
+        logDebug( "create a new interface for index %d\n", intfIndex );
+        /* we didn't find an existing matching tWANinterface for this intfIndex, so construct one. */
+        interface = calloc( 1, sizeof( tWANinterface ));
+        if ( interface == NULL) {
+            goto error;
+        }
+
+        struct rtnl_link * linkObj = rtnl_link_get( g.linkCache, intfIndex );
+        const char *      intfName = rtnl_link_get_name( linkObj );
+        if ( intfName == NULL) {
+            free( interface );
+            interface = NULL;
+            goto error;
+        }
+
+        interface->socketFD = newICMPsocket( intfName );
+        if ( interface->socketFD <= 0 ) {
+            /* if we can't open a raw ICMP socket, can't do anything useful... */
+            logError( "unable to open raw socket for interface %s\n", intfName );
+            free( interface );
+            interface = NULL;
+            goto error;
+        } else {
+            logDebug( "link name: %s (%d)\n", intfName, intfIndex );
+            interface->index = intfIndex;
+            interface->name = strdup( intfName );
+
+            interface->next = g.wanList;
+            g.wanList = interface;
+        }
+    }
+error:
+    return interface;
+}
+
+void forEachNexthopObj( struct rtnl_nexthop * nextHopObj, void * arg )
+{
+    logDebug("---- NextHop\n");
+    rtnl_route_nh_dump( nextHopObj, &g.dp );
+    fputc('\n', stderr);
+
+    struct rtnl_route * routeObj = (struct rtnl_route *)arg;
+
+    struct nl_addr * gatewayAddr = rtnl_route_nh_get_gateway( nextHopObj );
+
+    if ( gatewayAddr == NULL) {
+        // logError( "gateway is undefined\n" );
+        return;
+    }
+
+    int intfIndex = rtnl_route_nh_get_ifindex( nextHopObj );
+
+    tWANinterface * interface = getInterface( intfIndex );
+    if (interface == NULL) {
+        logDebug( "couldn't find interface for index %d\n", intfIndex );
+        return;
+    }
+
+    /* at this point, we have a populated tWANinterface, so add a route to wanRoutes */
+    tWANroute * route = calloc(1, sizeof( tWANroute ));
+    if ( route != NULL )
+    {
+        route->gateway  = nl_addr_clone( gatewayAddr );
+        /* API calls it 'priority', CLI calls it 'metric'. Not confusing at all... */
+        route->metric   = rtnl_route_get_priority( routeObj );
+
+#ifdef DEBUG
+        char gatewayAddrAsStr[128];
+        nl_addr2str( gatewayAddr, gatewayAddrAsStr, sizeof(gatewayAddrAsStr));
+        char scopeAsStr[128];
+        rtnl_scope2str( route->scope, scopeAsStr, sizeof(scopeAsStr));
+        logDebug( " - via: %s %s scope: %s metric: %d\n",
+                  interface->name, gatewayAddrAsStr, scopeAsStr, route->metric );
+#endif
+
+        /* add route to the wanRoute list of the interface */
+        route->next = interface->wanRoutes;
+        interface->wanRoutes = route;
     }
 }
 
@@ -563,133 +698,157 @@ void forEachRouteObj( struct nl_object * nlObj, void * arg )
     // we know it's a route object, since this callback is only ever used with the route cache
     struct rtnl_route * routeObj = (struct rtnl_route *) nlObj;
 
-    const struct nl_addr * nlAddr = rtnl_route_get_dst( routeObj );
-    /* is it a default route? */
-    if ( nl_addr_iszero( nlAddr ) )
-    {
-        struct rtnl_nexthop * nextHopObj = rtnl_route_nexthop_n( routeObj, 0 );
-        if ( nextHopObj != NULL )
-        {
-            // nl_object_dump( nlObj, &dp );
-            // rtnl_route_nh_dump( nextHopObj, &dp );
+    const struct nl_addr * dstAddr = rtnl_route_get_dst( routeObj );
 
-            tWANroute * wan = allocWANroute();
-            if (wan != NULL)
-            {
-                wan->intf.index = rtnl_route_nh_get_ifindex( nextHopObj );
-                struct rtnl_link * linkObj = rtnl_link_get( g.linkCache, wan->intf.index);
+    /* ignore it if it isn't a default route */
 
-                wan->intf.name = strdup( rtnl_link_get_name ( linkObj ) );
-                logDebug( "link name: %s\n", wan->intf.name );
-
-                wan->intf.socketFD = newICMPsocket( wan->intf.name );
-                /* if we can't open a raw ICMP socket, nothing will work... */
-                if (wan->intf.socketFD >= 0 )
-                {
-                    /* API calls it 'priority', CLI calls it 'metric'. Not confusing at all... */
-                    wan->metric = rtnl_route_get_priority( routeObj );
-                    logDebug( "metric %d\n", wan->metric );
-
-                    const struct nl_addr * gatewayAddr = rtnl_route_nh_get_gateway( nextHopObj );
-                    if ( gatewayAddr == NULL) {
-                        logDebug( "error: gatewayAddr is undefined\n" );
-                    } else {
-                        socklen_t sockLen = sizeof( wan->gateway );
-                        nl_addr_fill_sockaddr( gatewayAddr, &wan->gateway.common, &sockLen);
+    if ( nl_addr_iszero( dstAddr ) ) {
 #ifdef DEBUG
-                        char str[256];
-                        nl_addr2str( gatewayAddr, str, sizeof(str));
-                        char sockAddrAsStr[256];
-                        sockAddrToStr( &wan->gateway, sockAddrAsStr, sizeof(sockAddrAsStr) );
-
-                        logDebug( "gateway: %s (%s)\n", sockAddrAsStr, str );
+        fprintf(stderr,"\n");
+        logDebug("-- Route\n");
 #endif
-                    }
+        nl_object_dump( nlObj, &g.dp );
+        rtnl_route_foreach_nexthop( routeObj, forEachNexthopObj, routeObj );
+    }
+}
 
-                    // nl_object_dump( (struct nl_object *) linkObj, &g.dp );
+int probeRoutes( void )
+{
+    int err;
+    err = rtnl_addr_alloc_cache( g.netlink.socket, &g.addrCache );
+    if ( err < 0 ) {
+        logDebug( "error: source cache: %d: %s\n", err, nl_geterror( err ));
+        return -err;
+    }
 
-                    /* now scan through the address cache, looking for the source address to use */
-                    nl_cache_foreach( g.addrCache, forEachAddrObj, wan );
-                }
+    err = rtnl_link_alloc_cache( g.netlink.socket, AF_UNSPEC, &g.linkCache );
+    if ( err < 0 ) {
+        logDebug( "error: link cache: %d: %s\n", err, nl_geterror( err ));
+        return -err;
+    }
+
+    err = rtnl_route_alloc_cache( g.netlink.socket, AF_UNSPEC, 0, &g.routeCache );
+    if ( err < 0 ) {
+        logDebug( "error: route cache: %d: %s\n", err, nl_geterror( err ));
+        return -err;
+    }
+
+    /* callbacks are where the majority of setup occurs */
+    nl_cache_foreach( g.routeCache, forEachRouteObj, NULL);
+
+    if ( g.wanList != NULL) {
+#ifdef DEBUG
+        fprintf(stderr, "\n");
+        logDebug( "-- Addresses\n" );
+#endif
+        nl_cache_foreach( g.addrCache, forEachAddrObj, NULL);
+    }
+    return 0;
+}
+
+/*
+ * ToDo: periodically refresh the WANinterface objects, in case the routing table is changed by other
+ *       processes, e.g. DHCP. If a link starts failing, it should trigger this immediately too,
+ *       since the link itself may still be up, but we're still probing stale addresses.
+ */
+struct {
+    const char * name;
+    const char * host;
+    tAddrList    addresses;
+} targets[] = {
+        {"Google Public DNS", "dns.google"      },
+        {"Cloudflare DNS",    "one.one.one.one" },
+        {"OpenDNS",           "dns.opendns.com" },
+        {"NextDNS",           "dns.nextdns.io"  },
+        {"Apple",             "www.apple.com"   },
+        {NULL}
+};
+
+void probeTargets( void )
+{
+    struct addrinfo request;
+    memset( &request, 0, sizeof(request));
+    request.ai_socktype = SOCK_RAW;
+
+    logDebug( "---- Targets\n" );
+    for ( int i = 0; targets[i].name != NULL; i++ ) {
+        logDebug( " target: %s (%s)\n", targets[i].name, targets[i].host );
+
+        struct addrinfo * addrInfo = NULL;
+        if ( getaddrinfo( targets[i].host, NULL, &request, &addrInfo ) == 0 ) {
+            for ( ; addrInfo != NULL; addrInfo = addrInfo->ai_next ) {
+                addSockAddrToList( addrInfo->ai_addr, &targets[i].addresses );
+#ifdef DEBUG
+                char addressStr[256];
+                sockAddrToStr( addrInfo->ai_addr, addressStr, sizeof(addressStr) );
+                logDebug( "address: %s\n", addressStr );
+#endif
             }
         }
     }
 }
 
-int setup( int argc, char * argv[] )
+
+int setup( int argc, char *argv[] )
 {
     g.my.pid = getpid();
 
-    /* basename() would be simpler, but its definition is way too vague about possible side-effects */
+    /* basename() would be simpler, but its definition is way too vague about possible side effects */
     g.my.name = strrchr( argv[0], '/' );
-    if ( g.my.name++ == NULL ) {
+    if ( g.my.name++ == NULL) {
         g.my.name = argv[0];
     }
 
-    memset( &g.dp, 0 , sizeof(g.dp));
+    memset( &g.dp, 0, sizeof(g.dp));
     g.dp.dp_type = NL_DUMP_DETAILS;
     g.dp.dp_ivar = NH_DUMP_FROM_DETAILS;
-    g.dp.dp_fd   = stderr;
+    g.dp.dp_prefix = 16;
+    g.dp.dp_fd = stderr;
     g.dp.dp_dump_msgtype = 1;
 
     g.netlink.socket = nl_socket_alloc();
-    if (g.netlink.socket != NULL) {
+    if ( g.netlink.socket != NULL) {
         nl_connect( g.netlink.socket, NETLINK_ROUTE );
 
-        int err = rtnl_route_alloc_cache( g.netlink.socket, AF_UNSPEC, 0, &g.routeCache );
-        if ( err < 0 ) {
-            logDebug( "error: route cache: %d: %s\n", err, nl_geterror( err ));
-        } else {
-            err = rtnl_link_alloc_cache( g.netlink.socket, AF_UNSPEC, &g.linkCache );
-            if ( err < 0 ) {
-                logDebug( "error: link cache: %d: %s\n", err, nl_geterror(err) );
-            } else {
-                err = rtnl_addr_alloc_cache( g.netlink.socket, &g.addrCache );
-                if ( err < 0 ) {
-                    logDebug( "error: source cache: %d: %s\n", err, nl_geterror(err) );
-                } else {
-                    /* forEachRouteObj() is where the majority of setup occurs */
-                    nl_cache_foreach( g.routeCache, forEachRouteObj, NULL );
-                }
-            }
-        }
+        probeRoutes();
+
+        probeTargets();
     }
 
     return 0;
 }
 
-/*
- * ToDo: periodically refresh the WANroute objects, in case the routing table is changed by other
- *       processes, e.g. DHCP. If a link starts failing, it should trigger this immediately too,
- *       since the link itself may still be up, but we're still probing stale addresses.
- */
+
 int mainLoop( void )
 {
-    if (g.wanList == NULL) {
-        logError("%s: no default network routes found to monitor.\n", g.my.name);
+    if ( g.wanList == NULL) {
+        logError( "%s: no default network routes found to monitor.\n", g.my.name );
         return -1;
     }
-    tICMPpacket * packet = calloc(1, sizeof( tICMPpacket ) );
-    if (packet == NULL ) {
+
+    tRawPacket *packet = calloc( 1, sizeof( tRawPacket ));
+    if ( packet == NULL) {
         return -ENOMEM;
     }
 
     uSockAddr target;
+
     target.family = AF_INET;
-    inet_pton( target.family, "8.8.8.8", &target.in.sin_addr );
+    inet_pton( AF_INET, "1.1.1.1", &target.in.sin_addr );
+
     ssize_t rc;
     g.seq = 1;
-    for (tWANroute * wan = g.wanList; wan != NULL; wan = wan->next )
+    for ( tWANinterface * interface = g.wanList; interface != NULL; interface = interface->next )
     {
-        logDebug ( "interface %s\n", wan->intf.name );
+        logDebug ( "interface %s\n", interface->name );
         for (int ttl = 1; ttl < 20; ttl++)
         {
-            makeEchoRequest( packet, &wan->source, &target, ttl);
+            makeEchoRequestV4( packet, &interface->source.v4->addr, &target.in, ttl );
 
-            struct timeval timeout = {2, 0}; // wait max 2 seconds for a reply
+            struct timeval timeout = {1, 0}; // wait max 1 seconds for a reply
 
-            rc = sendto( wan->intf.socketFD,
-                         packet, packet->ip.tot_len, 0,
+            rc = sendto( interface->socketFD,
+                         packet, packet->v4.hdr.tot_len, 0,
                          &target.common, sizeof(target) );
 
             if ( rc <= 0 ) {
@@ -697,16 +856,17 @@ int mainLoop( void )
                 break;
             } else {
                 char sockAddrAsStr[256];
-                sockAddrToStr( &target, sockAddrAsStr, sizeof(sockAddrAsStr) );
+                sockAddrToStr( &target.common, sockAddrAsStr, sizeof(sockAddrAsStr) );
                 logDebug( "ICMP 'Echo Request' to %s, seq = %d, ttl %d\n", sockAddrAsStr, g.seq, ttl );
+                dumpHex( packet, packet->v4.hdr.tot_len );
             }
 
             fd_set read_set;
             memset( &read_set, 0, sizeof( read_set ) );
-            FD_SET( wan->intf.socketFD, &read_set );
+            FD_SET( interface->socketFD, &read_set );
 
             // wait for a reply with a timeout
-            rc = select( wan->intf.socketFD + 1, &read_set, NULL, NULL, &timeout );
+            rc = select( interface->socketFD + 1, &read_set, NULL, NULL, &timeout );
             if ( rc == 0 ) {
                 logDebug( "timeout: no response received\n" );
                 continue;
@@ -715,12 +875,13 @@ int mainLoop( void )
                 break;
             }
 
-            unsigned char data[2048];
-            uSockAddr srcAddr;
-            socklen_t srcAddrLen = sizeof( srcAddr );
-            rc = recvfrom( wan->intf.socketFD,
-                           data, sizeof( data ), 0,
-                           &srcAddr.common, &srcAddrLen );
+            tRawPacket receivedPkt;
+
+            uSockAddr senderAddr;
+            socklen_t senderAddrLen = sizeof( senderAddr );
+            rc = recvfrom( interface->socketFD,
+                           &receivedPkt, sizeof( receivedPkt ), 0,
+                           &senderAddr.common, &senderAddrLen );
             if ( rc < 0 ) {
                 perror( location );
                 break;
@@ -728,16 +889,11 @@ int mainLoop( void )
                 logDebug( "Error: truncated ICMP response (only %ld bytes long)\n", rc );
                 break;
             } else {
-                const tICMPpacket * rcvdPkt = (tICMPpacket *) data;
-
-                char sockAddrAsStr[256];
-                sockAddrToStr( &srcAddr, sockAddrAsStr, sizeof(sockAddrAsStr) );
-
-                int type = rcvdPkt->icmp.type;
+                int type = receivedPkt.v4.icmp.type;
                 if (type == ICMP_TIME_EXCEEDED) {
-
+                    /* remember this hop */
                 }
-#if DEBUG
+#ifdef DEBUG
                 const char * typeString = NULL;
                 if (type < ICMP_MAXTYPE) {
                     typeString = icmpTypeAsString[type];
@@ -745,13 +901,30 @@ int mainLoop( void )
                 if (typeString == NULL) {
                     typeString = "<error>";
                 }
+                char senderAddrAsStr[256];
+                sockAddrToStr( &senderAddr.common, senderAddrAsStr, sizeof(senderAddrAsStr) );
 
                 logDebug( "ICMP \'%s\' from %s, seq = %d, id=%d\n",
                           typeString,
-                          sockAddrAsStr,
-                          rcvdPkt->icmp.un.echo.sequence, rcvdPkt->icmp.un.echo.id );
-
-                if (type == ICMP_ECHOREPLY && isSameAddr( &srcAddr, &target ))
+                          senderAddrAsStr,
+                          receivedPkt.v4.icmp.un.echo.sequence, receivedPkt.v4.icmp.un.echo.id );
+#ifdef DEBUG
+                if (type == ICMP_TIME_EXCEEDED) {
+                    unsigned int id = ntohs( receivedPkt.v4.ext.timeExceeded.id );
+                    logDebug( "original id = %04x\n", id );
+#if 0
+                    dumpHex( &receivedPkt, rc );
+                    byte * p = (byte *)&receivedPkt.v4;
+                    for ( int i = 0; i < rc; i++) {
+                        if ( p[i] == 0x45 ) logDebug( "offset %d\n", i );
+                    }
+                    size_t offset = offsetof(tRawPacket, v4.ext.timeExceeded);
+                    logDebug( "original: %lu\n", offset );
+                    dumpHex( &receivedPkt.v4.ext.timeExceeded, rc - offset);
+#endif
+                }
+#endif
+                if (type == ICMP_ECHOREPLY && isSameAddr( &senderAddr, &target ) == 0)
                 {
                     logDebug("reached target\n\n");
                     break;
@@ -767,19 +940,19 @@ int mainLoop( void )
 
 int teardown( int exitCode )
 {
-    if ( g.netlink.socket != NULL ) {
+    if ( g.netlink.socket != NULL) {
         nl_socket_free( g.netlink.socket );
         g.netlink.socket = NULL;
     }
     return exitCode;
 }
 
-int main(int argc, char * argv[])
+
+int main( int argc, char *argv[] )
 {
     int exitCode = setup( argc, argv );
 
-    if ( exitCode == 0 )
-    {
+    if ( exitCode == 0 ) {
         exitCode = mainLoop();
 
         exitCode = teardown( exitCode );
