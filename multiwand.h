@@ -5,16 +5,6 @@
 #ifndef MULTIWAND_MULTIWAND_H
 #define MULTIWAND_MULTIWAND_H
 
-#define stringify(x) #x
-#define tostring(x) stringify(x)
-#define location __FILE_NAME__ ":" tostring(__LINE__)
-#ifdef DEBUG
-#define logDebug( ... ) fprintf( stderr, location " " __VA_ARGS__ )
-#else
-#define logdebug( ... )
-#endif
-#define logError( ... ) fprintf( stderr, "Error: " __VA_ARGS__ )
-
 #define ALIGN(bytes) __attribute__ ((aligned(bytes)))
 #define PACKED __attribute__ ((packed))
 
@@ -22,18 +12,18 @@
 
 const char *icmpTypeAsString[] = {
         [ICMP_ECHOREPLY]         = "Echo Reply",
-        [ICMP_DEST_UNREACH]      = "Destination Unreachable",
+        [ICMP_DEST_UNREACH]      = "Dest Unreach",
         [ICMP_SOURCE_QUENCH]     = "Source Quench",
-        [ICMP_REDIRECT]          = "Redirect (change route)",
+        [ICMP_REDIRECT]          = "Redirect",
         [ICMP_ECHO]              = "Echo Request",
         [ICMP_TIME_EXCEEDED]     = "Time Exceeded",
-        [ICMP_PARAMETERPROB]     = "Parameter Problem",
-        [ICMP_TIMESTAMP]         = "Timestamp Request",
-        [ICMP_TIMESTAMPREPLY]    = "Timestamp Reply",
-        [ICMP_INFO_REQUEST]      = "Information Request",
-        [ICMP_INFO_REPLY]        = "Information Reply",
-        [ICMP_ADDRESS]           = "Address Mask Request",
-        [ICMP_ADDRESSREPLY]      = "Address Mask Reply"
+        [ICMP_PARAMETERPROB]     = "Parameter Prob",
+        [ICMP_TIMESTAMP]         = "Timestamp Rqst",
+        [ICMP_TIMESTAMPREPLY]    = "Timestamp Rply",
+        [ICMP_INFO_REQUEST]      = "Info Rqst",
+        [ICMP_INFO_REPLY]        = "Info Rply",
+        [ICMP_ADDRESS]           = "Addr Mask Rqst",
+        [ICMP_ADDRESSREPLY]      = "Addr Mask Rply"
 };
 
 /* map a socket 'family' ID to a string for debugging messages */
